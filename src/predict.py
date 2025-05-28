@@ -4,8 +4,7 @@ import argparse
 from catboost import CatBoostClassifier
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import StratifiedKFold
-from sklearn.metrics import roc_auc_score, average_precision_score, fbeta_score
-from sklearn.preprocessing import LabelEncoder
+from sklearn.metrics import roc_auc_score, average_precision_score
 from imblearn.over_sampling import SVMSMOTE
 from imblearn.pipeline import Pipeline
 from sklearn.impute import KNNImputer
@@ -16,12 +15,13 @@ from tabpfn import TabPFNClassifier
 import optuna
 import shap
 import matplotlib.pyplot as plt
+from tabpfn_extensions.interpretability.shap import get_shap_values
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--pvalue_filter', type=float, default=0.05, help='p-value threshold for feature selection')
 parser.add_argument('--k', type=int, default=100, help='Number of top features to select')
 
-parser.add_argument('--model_type', type=str, default='rf',
+parser.add_argument('--model_type', type=str, default='catboost',
     choices=['rf', 'lightgbm', 'catboost', 'xgboost', 'tabpfn'],
     help='Model type: rf, lightgbm, catboost, xgboost, or tabpfn')
 
@@ -69,7 +69,6 @@ random_state = 42
 # Store results
 outer_roc_aucs = []
 outer_pr_aucs = []
-outer_f4s = []
 
 # Outer CV
 outer_cv = StratifiedKFold(n_splits=outer_k, shuffle=True, random_state=random_state)
@@ -131,7 +130,8 @@ for outer_fold, (train_idx, test_idx) in enumerate(outer_cv.split(X, y)):
                         'eval_metric': 'AUC',
                         'loss_function': 'Logloss',
                         'verbose': 0,
-                        'random_seed': 42
+                        'random_seed': 42,
+                        'allow_writing_files': False
                     }
                     model_class = CatBoostClassifier
 
@@ -178,7 +178,7 @@ for outer_fold, (train_idx, test_idx) in enumerate(outer_cv.split(X, y)):
             return np.mean(scores)
 
         study = optuna.create_study(direction='maximize')
-        study.optimize(objective, n_trials=3, show_progress_bar=False)
+        study.optimize(objective, n_trials=30, show_progress_bar=False)
         best_params = study.best_params
 
         # Train final model on full training set with best params
@@ -187,9 +187,10 @@ for outer_fold, (train_idx, test_idx) in enumerate(outer_cv.split(X, y)):
                 'eval_metric': 'AUC',
                 'loss_function': 'Logloss',
                 'verbose': 0,
-                'random_seed': 42
+                'random_seed': 42,
+                'allow_writing_files': False
             })
-            model = CatBoostClassifier(**best_params)
+            model_class = CatBoostClassifier
 
         elif args.model_type == "xgboost":
             best_params.update({
@@ -198,7 +199,7 @@ for outer_fold, (train_idx, test_idx) in enumerate(outer_cv.split(X, y)):
                 'eval_metric': 'auc',
                 'random_state': 42
             })
-            model = XGBClassifier(**best_params)
+            model_class = XGBClassifier
 
         elif args.model_type == "lightgbm":
             best_params.update({
@@ -207,15 +208,16 @@ for outer_fold, (train_idx, test_idx) in enumerate(outer_cv.split(X, y)):
                 'random_state': 42,
                 'verbose': -1
             })
-            model = LGBMClassifier(**best_params)
+            model_class = LGBMClassifier
 
         elif args.model_type == "rf":
             best_params.update({
                 'random_state': 42,
                 'n_jobs': -1
             })
-            model = RandomForestClassifier(**best_params)
+            model_class = RandomForestClassifier
 
+        model = model_class(**best_params)
         pipeline = Pipeline([
             ('smote', SVMSMOTE(random_state=random_state)),
             ('clf', model)
@@ -230,49 +232,41 @@ for outer_fold, (train_idx, test_idx) in enumerate(outer_cv.split(X, y)):
         model_type = args.model_type
         if model_type == "lightgbm":
             explainer = shap.Explainer(model, X_train_imp)
-            shap_values = explainer(X_train_imp)
-            plt.figure()
-            shap.summary_plot(shap_values, X_train_imp, show=False)
-            plt.tight_layout()
-            plt.savefig(f"shap_summary_{model_type}.png", dpi=300)
-            plt.close()
+            shap_values = explainer(X_train_imp).values
         elif model_type == "catboost":
             from catboost import Pool
             pool = Pool(X_train_imp, label=y_train, cat_features=None)
             shap_values = model.get_feature_importance(pool, type='ShapValues')
             shap_values = np.array(shap_values)[:, :-1]  # drop expected value column
-            plt.figure()
-            shap.summary_plot(shap_values, X_train_imp, show=False)
-            plt.tight_layout()
-            plt.savefig(f"shap_summary_{model_type}.png", dpi=300)
-            plt.close()
         elif model_type == "xgboost":
             explainer = shap.TreeExplainer(model, feature_perturbation='tree_path_dependent')
             shap_values = explainer.shap_values(X_train_imp)
-            plt.figure()
-            shap.summary_plot(shap_values, X_train_imp, show=False)
-            plt.tight_layout()
-            plt.savefig(f"shap_summary_{model_type}.png", dpi=300)
-            plt.close()
         elif model_type == "rf":
             explainer = shap.TreeExplainer(model)
-            shap_values = explainer.shap_values(X_train_imp)
-            plt.figure()
-            shap.summary_plot(shap_values[1], X_train_imp, show=False)
-            plt.tight_layout()
-            plt.savefig(f"shap_summary_{model_type}.png", dpi=300)
-            plt.close()
+            shap_values = explainer.shap_values(X_train_imp)[:,:,1]
         elif model_type == "tabpfn":
-            print(f"SHAP summary plot for TabPFN not supported!")
+            shap_values = get_shap_values(model, X_train_imp)
+
+        plt.figure()
+        shap.summary_plot(shap_values, X_train_imp, show=False)
+        plt.tight_layout()
+        plt.savefig(f"{model_type}_shap_summary.png", dpi=300)
+        plt.close()
+
+        mean_abs_shap = np.abs(shap_values).mean(axis=0)  # mean absolute SHAP per feature
+        importance_df = pd.DataFrame({
+            'feature': X_train_imp.columns,
+            'mean_abs_shap': mean_abs_shap
+        }).sort_values(by='mean_abs_shap', ascending=False)
+
+        importance_df.to_csv(f"{model_type}_shap_feature_importance.csv", index=False)
 
     # Metrics
     roc_auc = roc_auc_score(y_val, y_pred_prob)
     pr_auc = average_precision_score(y_val, y_pred_prob)
-    f4 = fbeta_score(y_val, y_pred, beta=4)
     outer_roc_aucs.append(roc_auc)
     outer_pr_aucs.append(pr_auc)
-    outer_f4s.append(f4)
-    print(f"Fold {outer_fold+1}: ROC AUC={roc_auc:.3f}, PR AUC={pr_auc:.3f}, F4={f4:.3f}")
+    print(f"Fold {outer_fold+1}: ROC AUC={roc_auc:.3f}, PR AUC={pr_auc:.3f}")
 
 # 95% CI calculation
 def mean_ci(data):
@@ -283,9 +277,7 @@ def mean_ci(data):
 
 roc_mean, roc_low, roc_high = mean_ci(outer_roc_aucs)
 pr_mean, pr_low, pr_high = mean_ci(outer_pr_aucs)
-f4_mean, f4_low, f4_high = mean_ci(outer_f4s)
 
 print("\n==== Nested CV Results ====")
 print(f"ROC AUC: {roc_mean:.3f} (95% CI: {roc_low:.3f}-{roc_high:.3f})")
 print(f"PR AUC: {pr_mean:.3f} (95% CI: {pr_low:.3f}-{pr_high:.3f})")
-print(f"F4-score: {f4_mean:.3f} (95% CI: {f4_low:.3f}-{f4_high:.3f})") 
