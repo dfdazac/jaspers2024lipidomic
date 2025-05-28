@@ -1,6 +1,7 @@
 import pandas as pd
 import numpy as np
 import argparse
+from catboost import CatBoostClassifier
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import StratifiedKFold
 from sklearn.metrics import roc_auc_score, average_precision_score, fbeta_score
@@ -10,12 +11,17 @@ from imblearn.pipeline import Pipeline
 from sklearn.impute import KNNImputer
 from scipy.stats import sem, t
 from lightgbm import LGBMClassifier
+from xgboost import XGBClassifier
+from tabpfn import TabPFNClassifier
 import optuna
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--pvalue_filter', type=float, default=0.05, help='p-value threshold for feature selection')
 parser.add_argument('--k', type=int, default=100, help='Number of top features to select')
-parser.add_argument('--model_type', type=str, default='rf', choices=['rf', 'lightgbm'], help='Model type: rf or lightgbm')
+parser.add_argument('--model_type', type=str, default='tabpfn',
+    choices=['rf', 'lightgbm', 'catboost', 'xgboost', 'tabpfn'],
+    help='Model type: rf, lightgbm, catboost, xgboost, or tabpfn')
+parser.add_argument('--no_imputation', action='store_true', help='Disable KNN imputation')
 args = parser.parse_args()
 
 # Load statistical test results for feature selection
@@ -76,134 +82,143 @@ for outer_fold, (train_idx, test_idx) in enumerate(outer_cv.split(X, y)):
     X_val, y_val = X.iloc[val_idx], y.iloc[val_idx]
 
     # KNN imputation fit on training data, applied to both train and val
-    imputer = KNNImputer(n_neighbors=5)
-    X_train_imp = pd.DataFrame(imputer.fit_transform(X_train), columns=X_train.columns, index=X_train.index)
-    X_val_imp = pd.DataFrame(imputer.transform(X_val), columns=X_val.columns, index=X_val.index)
+    if args.no_imputation:
+        X_train_imp = X_train.copy()
+        X_val_imp = X_val.copy()
+    else:
+        imputer = KNNImputer(n_neighbors=5)
+        X_train_imp = pd.DataFrame(imputer.fit_transform(X_train), columns=X_train.columns, index=X_train.index)
+        X_val_imp = pd.DataFrame(imputer.transform(X_val), columns=X_val.columns, index=X_val.index)
 
-    # Inner CV for hyperparameter tuning (no feature selection here, features are pre-selected)
-    def objective(trial):
-        inner_cv = StratifiedKFold(n_splits=inner_k, shuffle=True, random_state=random_state)
-        scores = []
+    if args.model_type == "tabpfn":
+        model = TabPFNClassifier(device="cpu")
+        model.fit(X_train_imp.values, y_train.values)
+        y_pred_prob = model.predict_proba(X_val_imp.values)[:, 1]
+        y_pred = model.predict(X_val_imp.values)
+    else:
+        # Inner CV for hyperparameter tuning (no feature selection here, features are pre-selected)
+        def objective(trial):
+            inner_cv = StratifiedKFold(n_splits=inner_k, shuffle=True, random_state=random_state)
+            scores = []
 
-        for inner_train_idx, inner_test_idx in inner_cv.split(X_train_imp, y_train):
-            X_inner_train, y_inner_train = X_train_imp.iloc[inner_train_idx], y_train.iloc[inner_train_idx]
-            X_inner_test, y_inner_test = X_train_imp.iloc[inner_test_idx], y_train.iloc[inner_test_idx]
-            
-            if args.model_type == "rf":
-                params = {
-                    'n_estimators': trial.suggest_int('n_estimators', 50, 300),
-                    'max_depth': trial.suggest_int('max_depth', 3, 20),
-                    'min_samples_split': trial.suggest_int('min_samples_split', 2, 10),
-                    'min_samples_leaf': trial.suggest_int('min_samples_leaf', 1, 10),
-                    'random_state': 42,
-                    'n_jobs': -1
-                }
-                model_class = RandomForestClassifier
+            for inner_train_idx, inner_test_idx in inner_cv.split(X_train_imp, y_train):
+                X_inner_train, y_inner_train = X_train_imp.iloc[inner_train_idx], y_train.iloc[inner_train_idx]
+                X_inner_test, y_inner_test = X_train_imp.iloc[inner_test_idx], y_train.iloc[inner_test_idx]
                 
-            elif args.model_type == "catboost":
-                params = {
-                    'iterations': trial.suggest_int('iterations', 100, 300),
-                    'learning_rate': trial.suggest_float('learning_rate', 0.01, 0.3, log=True),
-                    'depth': trial.suggest_int('depth', 3, 8),
-                    'l2_leaf_reg': trial.suggest_float('l2_leaf_reg', 1e-3, 10.0, log=True),
-                    'random_strength': trial.suggest_float('random_strength', 0.1, 1.0),
-                    'bagging_temperature': trial.suggest_float('bagging_temperature', 0.0, 1.0),
-                    'eval_metric': 'AUC',
-                    'loss_function': 'Logloss',
-                    'verbose': 0,
-                    'random_seed': 42
-                }
-                model_class = CatBoostClassifier
+                if args.model_type == "rf":
+                    params = {
+                        'n_estimators': trial.suggest_int('n_estimators', 50, 300),
+                        'max_depth': trial.suggest_int('max_depth', 3, 20),
+                        'min_samples_split': trial.suggest_int('min_samples_split', 2, 10),
+                        'min_samples_leaf': trial.suggest_int('min_samples_leaf', 1, 10),
+                        'random_state': 42,
+                        'n_jobs': -1
+                    }
+                    model_class = RandomForestClassifier
+                    
+                elif args.model_type == "catboost":
+                    params = {
+                        'iterations': trial.suggest_int('iterations', 100, 300),
+                        'learning_rate': trial.suggest_float('learning_rate', 0.01, 0.3, log=True),
+                        'depth': trial.suggest_int('depth', 3, 8),
+                        'l2_leaf_reg': trial.suggest_float('l2_leaf_reg', 1e-3, 10.0, log=True),
+                        'random_strength': trial.suggest_float('random_strength', 0.1, 1.0),
+                        'bagging_temperature': trial.suggest_float('bagging_temperature', 0.0, 1.0),
+                        'eval_metric': 'AUC',
+                        'loss_function': 'Logloss',
+                        'verbose': 0,
+                        'random_seed': 42
+                    }
+                    model_class = CatBoostClassifier
 
-            elif args.model_type == "xgboost":
-                params = {
-                    'n_estimators': trial.suggest_int('n_estimators', 100, 300),
-                    'max_depth': trial.suggest_int('max_depth', 3, 8),
-                    'learning_rate': trial.suggest_float('learning_rate', 0.01, 0.3, log=True),
-                    'reg_lambda': trial.suggest_float('reg_lambda', 1e-3, 10.0, log=True),
-                    'reg_alpha': trial.suggest_float('reg_alpha', 1e-3, 10.0, log=True),
-                    'subsample': trial.suggest_float('subsample', 0.5, 1.0),
-                    'colsample_bytree': trial.suggest_float('colsample_bytree', 0.5, 1.0),
-                    'tree_method': 'hist',
-                    'enable_categorical': True,
-                    'eval_metric': 'auc',
-                    'random_state': 42
-                }
-                model_class = XGBClassifier
+                elif args.model_type == "xgboost":
+                    params = {
+                        'n_estimators': trial.suggest_int('n_estimators', 100, 300),
+                        'max_depth': trial.suggest_int('max_depth', 3, 8),
+                        'learning_rate': trial.suggest_float('learning_rate', 0.01, 0.3, log=True),
+                        'reg_lambda': trial.suggest_float('reg_lambda', 1e-3, 10.0, log=True),
+                        'reg_alpha': trial.suggest_float('reg_alpha', 1e-3, 10.0, log=True),
+                        'subsample': trial.suggest_float('subsample', 0.5, 1.0),
+                        'colsample_bytree': trial.suggest_float('colsample_bytree', 0.5, 1.0),
+                        'tree_method': 'hist',
+                        'enable_categorical': True,
+                        'eval_metric': 'auc',
+                        'random_state': 42
+                    }
+                    model_class = XGBClassifier
 
-            elif args.model_type == "lightgbm":
-                params = {
-                    'n_estimators': trial.suggest_int('n_estimators', 100, 300),
-                    'max_depth': trial.suggest_int('max_depth', 3, 8),
-                    'learning_rate': trial.suggest_float('learning_rate', 0.01, 0.3, log=True),
-                    'reg_lambda': trial.suggest_float('reg_lambda', 1e-3, 10.0, log=True),
-                    'reg_alpha': trial.suggest_float('reg_alpha', 1e-3, 10.0, log=True),
-                    'subsample': trial.suggest_float('subsample', 0.5, 1.0),
-                    'colsample_bytree': trial.suggest_float('colsample_bytree', 0.5, 1.0),
-                    'objective': 'binary',
-                    'boosting_type': 'gbdt',
-                    'random_state': 42,
-                    'verbose': -1
-                }
-                model_class = LGBMClassifier
+                elif args.model_type == "lightgbm":
+                    params = {
+                        'n_estimators': trial.suggest_int('n_estimators', 100, 300),
+                        'max_depth': trial.suggest_int('max_depth', 3, 8),
+                        'learning_rate': trial.suggest_float('learning_rate', 0.01, 0.3, log=True),
+                        'reg_lambda': trial.suggest_float('reg_lambda', 1e-3, 10.0, log=True),
+                        'reg_alpha': trial.suggest_float('reg_alpha', 1e-3, 10.0, log=True),
+                        'subsample': trial.suggest_float('subsample', 0.5, 1.0),
+                        'colsample_bytree': trial.suggest_float('colsample_bytree', 0.5, 1.0),
+                        'objective': 'binary',
+                        'boosting_type': 'gbdt',
+                        'random_state': 42,
+                        'verbose': -1
+                    }
+                    model_class = LGBMClassifier
 
-            pipeline = Pipeline([
-                ('smote', SVMSMOTE(random_state=random_state)),
-                ('clf', model_class(**params))
-            ])
-            pipeline.fit(X_inner_train, y_inner_train)
-            y_pred_prob = pipeline.predict_proba(X_inner_test)[:, 1]
-            score = average_precision_score(y_inner_test, y_pred_prob)
-            scores.append(score)
-        return np.mean(scores)
+                pipeline = Pipeline([
+                    ('smote', SVMSMOTE(random_state=random_state)),
+                    ('clf', model_class(**params))
+                ])
+                pipeline.fit(X_inner_train, y_inner_train)
+                y_pred_prob = pipeline.predict_proba(X_inner_test)[:, 1]
+                score = average_precision_score(y_inner_test, y_pred_prob)
+                scores.append(score)
+            return np.mean(scores)
 
-    study = optuna.create_study(direction='maximize')
-    study.optimize(objective, n_trials=30, show_progress_bar=False)
-    best_params = study.best_params
+        study = optuna.create_study(direction='maximize')
+        study.optimize(objective, n_trials=30, show_progress_bar=False)
+        best_params = study.best_params
 
-    # Train final model on full training set with best params
-    if args.model_type == "catboost":
-        best_params.update({
-            'eval_metric': 'AUC',
-            'loss_function': 'Logloss',
-            'cat_features': categorical_features,
-            'verbose': 0,
-            'random_seed': 42
-        })
-        model = CatBoostClassifier(**best_params)
+        # Train final model on full training set with best params
+        if args.model_type == "catboost":
+            best_params.update({
+                'eval_metric': 'AUC',
+                'loss_function': 'Logloss',
+                'verbose': 0,
+                'random_seed': 42
+            })
+            model = CatBoostClassifier(**best_params)
 
-    elif args.model_type == "xgboost":
-        best_params.update({
-            'tree_method': 'hist',
-            'enable_categorical': True,
-            'eval_metric': 'auc',
-            'random_state': 42
-        })
-        model = XGBClassifier(**best_params)
+        elif args.model_type == "xgboost":
+            best_params.update({
+                'tree_method': 'hist',
+                'enable_categorical': True,
+                'eval_metric': 'auc',
+                'random_state': 42
+            })
+            model = XGBClassifier(**best_params)
 
-    elif args.model_type == "lightgbm":
-        best_params.update({
-            'objective': 'binary',
-            'boosting_type': 'gbdt',
-            'random_state': 42,
-            'verbose': -1
-        })
-        model = LGBMClassifier(**best_params)
+        elif args.model_type == "lightgbm":
+            best_params.update({
+                'objective': 'binary',
+                'boosting_type': 'gbdt',
+                'random_state': 42,
+                'verbose': -1
+            })
+            model = LGBMClassifier(**best_params)
 
-    elif args.model_type == "rf":
-        best_params.update({
-            'random_state': 42,
-            'n_jobs': -1
-        })
-        model = RandomForestClassifier(**best_params)
+        elif args.model_type == "rf":
+            best_params.update({
+                'random_state': 42,
+                'n_jobs': -1
+            })
+            model = RandomForestClassifier(**best_params)
 
-    pipeline = Pipeline([
-        ('smote', SVMSMOTE(random_state=random_state)),
-        ('clf', model)
-    ])
-    pipeline.fit(X_train_imp, y_train)
-    y_pred_prob = pipeline.predict_proba(X_val_imp)[:, 1]
-    y_pred = pipeline.predict(X_val_imp)
+        pipeline = Pipeline([
+            ('smote', SVMSMOTE(random_state=random_state)),
+            ('clf', model)
+        ])
+        pipeline.fit(X_train_imp, y_train)
+        y_pred_prob = pipeline.predict_proba(X_val_imp)[:, 1]
+        y_pred = pipeline.predict(X_val_imp)
 
     # Metrics
     roc_auc = roc_auc_score(y_val, y_pred_prob)
