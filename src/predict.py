@@ -16,12 +16,17 @@ import optuna
 import shap
 import matplotlib.pyplot as plt
 from tabpfn_extensions.interpretability.shap import get_shap_values
+import os, os.path as osp
+import json
+import hashlib
+from datetime import datetime
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--pvalue_filter', type=float, default=0.05, help='p-value threshold for feature selection')
 parser.add_argument('--k', type=int, default=100, help='Number of top features to select')
+parser.add_argument('--num_trials', type=int, default=30, help='Number of Optuna trials')
 
-parser.add_argument('--model_type', type=str, default='tabpfn',
+parser.add_argument('--model_type', type=str, default='lightgbm',
     choices=['rf', 'lightgbm', 'catboost', 'xgboost', 'tabpfn'],
     help='Model type: rf, lightgbm, catboost, xgboost, or tabpfn')
 
@@ -66,9 +71,27 @@ outer_k = 5
 inner_k = 3
 random_state = 42
 
+# --- Experiment output folder setup ---
+exp_root = "experiments"
+os.makedirs(exp_root, exist_ok=True)
+run_time = datetime.now().strftime("%Y-%m-%d-%H%M%S")
+rand_hash = hashlib.sha1(os.urandom(8)).hexdigest()[:6]
+exp_dir = os.path.join(exp_root, f"{run_time}-{rand_hash}")
+os.makedirs(exp_dir, exist_ok=True)
+
+# Store CLI args and run info
+run_log = {
+    'args': vars(args),
+    'run_time': run_time,
+    'random_hash': rand_hash,
+    'metrics': {},
+    'per_fold': []
+}
+
 # Store results
 outer_roc_aucs = []
 outer_pr_aucs = []
+per_fold_rows = []
 
 # Outer CV
 outer_cv = StratifiedKFold(n_splits=outer_k, shuffle=True, random_state=random_state)
@@ -178,7 +201,7 @@ for outer_fold, (train_idx, test_idx) in enumerate(outer_cv.split(X, y)):
             return np.mean(scores)
 
         study = optuna.create_study(direction='maximize')
-        study.optimize(objective, n_trials=30, show_progress_bar=False)
+        study.optimize(objective, n_trials=args.num_trials, show_progress_bar=False)
         best_params = study.best_params
 
         # Train final model on full training set with best params
@@ -248,7 +271,7 @@ for outer_fold, (train_idx, test_idx) in enumerate(outer_cv.split(X, y)):
         plt.figure()
         shap.summary_plot(shap_values, X_train_imp, show=False)
         plt.tight_layout()
-        plt.savefig(f"{model_type}_shap_summary.png", dpi=300)
+        plt.savefig(osp.join(exp_dir, f"{model_type}_shap_summary.png"), dpi=300)
         plt.close()
 
         mean_abs_shap = np.abs(shap_values).mean(axis=0)  # mean absolute SHAP per feature
@@ -257,7 +280,7 @@ for outer_fold, (train_idx, test_idx) in enumerate(outer_cv.split(X, y)):
             'mean_abs_shap': mean_abs_shap
         }).sort_values(by='mean_abs_shap', ascending=False)
 
-        importance_df.to_csv(f"{model_type}_shap_feature_importance.csv", index=False)
+        importance_df.to_csv(osp.join(exp_dir, f"{model_type}_shap_feature_importance.csv"), index=False)
 
     # Metrics
     roc_auc = roc_auc_score(y_val, y_pred_prob)
@@ -265,6 +288,7 @@ for outer_fold, (train_idx, test_idx) in enumerate(outer_cv.split(X, y)):
     outer_roc_aucs.append(roc_auc)
     outer_pr_aucs.append(pr_auc)
     print(f"Fold {outer_fold+1}: ROC AUC={roc_auc:.3f}, PR AUC={pr_auc:.3f}")
+    per_fold_rows.append({'fold': outer_fold+1, 'roc_auc': roc_auc, 'pr_auc': pr_auc})
 
 # 95% CI calculation
 def mean_ci(data):
@@ -279,3 +303,12 @@ pr_mean, pr_low, pr_high = mean_ci(outer_pr_aucs)
 print("\n==== Nested CV Results ====")
 print(f"ROC AUC: {roc_mean:.3f} (95% CI: {roc_low:.3f}-{roc_high:.3f})")
 print(f"PR AUC: {pr_mean:.3f} (95% CI: {pr_low:.3f}-{pr_high:.3f})")
+
+# --- Save experiment log and results ---
+run_log['metrics'] = {
+    'roc_auc': {'mean': roc_mean, 'ci_low': roc_low, 'ci_high': roc_high},
+    'pr_auc': {'mean': pr_mean, 'ci_low': pr_low, 'ci_high': pr_high}
+}
+run_log['per_fold'] = per_fold_rows
+with open(os.path.join(exp_dir, 'log.json'), 'w') as f:
+    json.dump(run_log, f, indent=2)
