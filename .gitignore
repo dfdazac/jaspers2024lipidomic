@@ -187,4 +187,5 @@ cython_debug/
 .cursorignore
 .cursorindexingignore
 
-experiments/
+experiments/*
+!experiments/gitkeep

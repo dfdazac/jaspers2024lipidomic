@@ -20,17 +20,19 @@ import os, os.path as osp
 import json
 import hashlib
 from datetime import datetime
+from sklearn.preprocessing import StandardScaler
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--pvalue_filter', type=float, default=0.05, help='p-value threshold for feature selection')
 parser.add_argument('--k', type=int, default=100, help='Number of top features to select')
 parser.add_argument('--num_trials', type=int, default=30, help='Number of Optuna trials')
 
-parser.add_argument('--model_type', type=str, default='lightgbm',
+parser.add_argument('--model_type', type=str, default='tabpfn',
     choices=['rf', 'lightgbm', 'catboost', 'xgboost', 'tabpfn'],
     help='Model type: rf, lightgbm, catboost, xgboost, or tabpfn')
 
-parser.add_argument('--no_imputation', action='store_true', help='Disable KNN imputation')
+parser.add_argument('--impute', action='store_true', help='Disable KNN imputation')
+parser.add_argument('--normalize', action='store_true', help='Enable feature normalization (StandardScaler)')
 args = parser.parse_args()
 
 # Load statistical test results for feature selection
@@ -85,7 +87,8 @@ run_log = {
     'run_time': run_time,
     'random_hash': rand_hash,
     'metrics': {},
-    'per_fold': []
+    'per_fold': [],
+    'features': top_lipids
 }
 
 # Store results
@@ -107,14 +110,21 @@ for outer_fold, (train_idx, test_idx) in enumerate(outer_cv.split(X, y)):
     X_train, y_train = X.iloc[train_idx], y.iloc[train_idx]
     X_val, y_val = X.iloc[val_idx], y.iloc[val_idx]
 
-    # KNN imputation fit on training data, applied to both train and val
-    if args.no_imputation:
-        X_train_imp = X_train.copy()
-        X_val_imp = X_val.copy()
-    else:
+    # Normalization and imputation logic
+    X_train_proc = X_train.copy()
+    X_val_proc = X_val.copy()
+
+    if args.impute:
         imputer = KNNImputer(n_neighbors=5)
-        X_train_imp = pd.DataFrame(imputer.fit_transform(X_train), columns=X_train.columns, index=X_train.index)
-        X_val_imp = pd.DataFrame(imputer.transform(X_val), columns=X_val.columns, index=X_val.index)
+        X_train_proc = pd.DataFrame(imputer.fit_transform(X_train_proc), columns=X_train.columns, index=X_train.index)
+        X_val_proc = pd.DataFrame(imputer.transform(X_val_proc), columns=X_val.columns, index=X_val.index)
+    if args.normalize:
+        scaler = StandardScaler()
+        X_train_proc = pd.DataFrame(scaler.fit_transform(X_train_proc), columns=X_train.columns, index=X_train.index)
+        X_val_proc = pd.DataFrame(scaler.transform(X_val_proc), columns=X_val.columns, index=X_val.index)
+    
+    X_train_imp = X_train_proc
+    X_val_imp = X_val_proc
 
     if args.model_type == "tabpfn":
         model = TabPFNClassifier(device="cpu")
