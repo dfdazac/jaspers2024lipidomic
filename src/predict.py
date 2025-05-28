@@ -14,13 +14,17 @@ from lightgbm import LGBMClassifier
 from xgboost import XGBClassifier
 from tabpfn import TabPFNClassifier
 import optuna
+import shap
+import matplotlib.pyplot as plt
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--pvalue_filter', type=float, default=0.05, help='p-value threshold for feature selection')
 parser.add_argument('--k', type=int, default=100, help='Number of top features to select')
-parser.add_argument('--model_type', type=str, default='tabpfn',
+
+parser.add_argument('--model_type', type=str, default='rf',
     choices=['rf', 'lightgbm', 'catboost', 'xgboost', 'tabpfn'],
     help='Model type: rf, lightgbm, catboost, xgboost, or tabpfn')
+
 parser.add_argument('--no_imputation', action='store_true', help='Disable KNN imputation')
 args = parser.parse_args()
 
@@ -174,7 +178,7 @@ for outer_fold, (train_idx, test_idx) in enumerate(outer_cv.split(X, y)):
             return np.mean(scores)
 
         study = optuna.create_study(direction='maximize')
-        study.optimize(objective, n_trials=30, show_progress_bar=False)
+        study.optimize(objective, n_trials=3, show_progress_bar=False)
         best_params = study.best_params
 
         # Train final model on full training set with best params
@@ -219,6 +223,47 @@ for outer_fold, (train_idx, test_idx) in enumerate(outer_cv.split(X, y)):
         pipeline.fit(X_train_imp, y_train)
         y_pred_prob = pipeline.predict_proba(X_val_imp)[:, 1]
         y_pred = pipeline.predict(X_val_imp)
+
+    # SHAP summary plot for fold 1
+    if outer_fold == 0:
+        print("Generating SHAP values for fold 1...")
+        model_type = args.model_type
+        if model_type == "lightgbm":
+            explainer = shap.Explainer(model, X_train_imp)
+            shap_values = explainer(X_train_imp)
+            plt.figure()
+            shap.summary_plot(shap_values, X_train_imp, show=False)
+            plt.tight_layout()
+            plt.savefig(f"shap_summary_{model_type}.png", dpi=300)
+            plt.close()
+        elif model_type == "catboost":
+            from catboost import Pool
+            pool = Pool(X_train_imp, label=y_train, cat_features=None)
+            shap_values = model.get_feature_importance(pool, type='ShapValues')
+            shap_values = np.array(shap_values)[:, :-1]  # drop expected value column
+            plt.figure()
+            shap.summary_plot(shap_values, X_train_imp, show=False)
+            plt.tight_layout()
+            plt.savefig(f"shap_summary_{model_type}.png", dpi=300)
+            plt.close()
+        elif model_type == "xgboost":
+            explainer = shap.TreeExplainer(model, feature_perturbation='tree_path_dependent')
+            shap_values = explainer.shap_values(X_train_imp)
+            plt.figure()
+            shap.summary_plot(shap_values, X_train_imp, show=False)
+            plt.tight_layout()
+            plt.savefig(f"shap_summary_{model_type}.png", dpi=300)
+            plt.close()
+        elif model_type == "rf":
+            explainer = shap.TreeExplainer(model)
+            shap_values = explainer.shap_values(X_train_imp)
+            plt.figure()
+            shap.summary_plot(shap_values[1], X_train_imp, show=False)
+            plt.tight_layout()
+            plt.savefig(f"shap_summary_{model_type}.png", dpi=300)
+            plt.close()
+        elif model_type == "tabpfn":
+            print(f"SHAP summary plot for TabPFN not supported!")
 
     # Metrics
     roc_auc = roc_auc_score(y_val, y_pred_prob)
