@@ -21,7 +21,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--pvalue_filter', type=float, default=0.05, help='p-value threshold for feature selection')
 parser.add_argument('--k', type=int, default=100, help='Number of top features to select')
 
-parser.add_argument('--model_type', type=str, default='catboost',
+parser.add_argument('--model_type', type=str, default='tabpfn',
     choices=['rf', 'lightgbm', 'catboost', 'xgboost', 'tabpfn'],
     help='Model type: rf, lightgbm, catboost, xgboost, or tabpfn')
 
@@ -227,9 +227,9 @@ for outer_fold, (train_idx, test_idx) in enumerate(outer_cv.split(X, y)):
         y_pred = pipeline.predict(X_val_imp)
 
     # SHAP summary plot for fold 1
-    if outer_fold == 0:
+    model_type = args.model_type
+    if outer_fold == 0 and model_type != "tabpfn":
         print("Generating SHAP values for fold 1...")
-        model_type = args.model_type
         if model_type == "lightgbm":
             explainer = shap.Explainer(model, X_train_imp)
             shap_values = explainer(X_train_imp).values
@@ -244,8 +244,6 @@ for outer_fold, (train_idx, test_idx) in enumerate(outer_cv.split(X, y)):
         elif model_type == "rf":
             explainer = shap.TreeExplainer(model)
             shap_values = explainer.shap_values(X_train_imp)[:,:,1]
-        elif model_type == "tabpfn":
-            shap_values = get_shap_values(model, X_train_imp)
 
         plt.figure()
         shap.summary_plot(shap_values, X_train_imp, show=False)
