@@ -21,10 +21,9 @@ import json
 import hashlib
 from datetime import datetime
 from sklearn.preprocessing import StandardScaler
-from sklearn.feature_selection import SelectKBest, f_classif
+from sklearn.feature_selection import SelectKBest, f_classif, mutual_info_classif
 
 parser = argparse.ArgumentParser()
-parser.add_argument('--pvalue_filter', type=float, default=0.05, help='p-value threshold for feature selection')
 parser.add_argument('--k', type=int, default=100, help='Number of top features to select')
 parser.add_argument('--num_trials', type=int, default=30, help='Number of Optuna trials')
 
@@ -32,7 +31,6 @@ parser.add_argument('--model_type', type=str, default='tabpfn',
     choices=['rf', 'lightgbm', 'catboost', 'xgboost', 'tabpfn'],
     help='Model type: rf, lightgbm, catboost, xgboost, or tabpfn')
 
-parser.add_argument('--impute', action='store_true', help='Disable KNN imputation')
 parser.add_argument('--normalize', action='store_true', help='Enable feature normalization (StandardScaler)')
 args = parser.parse_args()
 
@@ -43,7 +41,6 @@ df = pd.read_excel(file_path, sheet_name="lipidomics_data_males")
 # Prepare features and target
 y_raw = df['Presence of adrenal insufficiency '].astype(str).str.strip()
 y = (y_raw == 'AI').astype(int)
-print(df.columns)
 # Select all columns except the specified ones for X
 exclude_cols = [
     'Sample ID',
@@ -104,30 +101,22 @@ for outer_fold, (train_idx, test_idx) in enumerate(outer_cv.split(X, y)):
     X_train_proc = X_train.copy()
     X_val_proc = X_val.copy()
 
-    if args.impute:
-        imputer = KNNImputer(n_neighbors=5)
-        X_train_proc = pd.DataFrame(imputer.fit_transform(X_train_proc), columns=X_train.columns, index=X_train.index)
-        X_val_proc = pd.DataFrame(imputer.transform(X_val_proc), columns=X_val.columns, index=X_val.index)
-
-    # Univariate feature selection
-    selector = SelectKBest(score_func=f_classif, k=300)
-    X_train_selected = selector.fit_transform(X_train_proc, y_train)
-    X_val_selected = selector.transform(X_val_proc)
-    selected_feature_names = X_train_proc.columns[selector.get_support()]
-
-    # Train Random Forest to select top 100 features
-    rf = RandomForestClassifier(n_estimators=100, random_state=random_state, n_jobs=-1)
-    rf.fit(X_train_selected, y_train)
-    importances = rf.feature_importances_
-    indices = np.argsort(importances)[-100:]
-    final_feature_names = selected_feature_names[indices]
-    X_train_final = pd.DataFrame(X_train_selected[:, indices], columns=final_feature_names, index=X_train_proc.index)
-    X_val_final = pd.DataFrame(X_val_selected[:, indices], columns=final_feature_names, index=X_val_proc.index)
-
+    imputer = KNNImputer(n_neighbors=5)
+    X_train_proc = pd.DataFrame(imputer.fit_transform(X_train_proc), columns=X_train.columns, index=X_train.index)
+    X_val_proc = pd.DataFrame(imputer.transform(X_val_proc), columns=X_val.columns, index=X_val.index)
+    
     if args.normalize:
         scaler = StandardScaler()
-        X_train_final = pd.DataFrame(scaler.fit_transform(X_train_final), columns=final_feature_names, index=train_idx)
-        X_val_final = pd.DataFrame(scaler.transform(X_val_final), columns=final_feature_names, index=val_idx)
+        X_train_proc = pd.DataFrame(scaler.fit_transform(X_train_proc), columns=X_train.columns, index=X_train.index)
+        X_val_proc = pd.DataFrame(scaler.transform(X_val_proc), columns=X_val.columns, index=X_val.index)
+
+    # Univariate feature selection
+    selector = SelectKBest(score_func=mutual_info_classif, k=args.k)
+    selector.fit(X_train_proc, y_train)
+
+    selected_cols = X_train_proc.columns[selector.get_support()]
+    X_train_final = X_train_proc[selected_cols]
+    X_val_final = X_val_proc[selected_cols]
 
     X_train_imp = X_train_final
     X_val_imp = X_val_final
