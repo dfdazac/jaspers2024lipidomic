@@ -21,6 +21,7 @@ import json
 import hashlib
 from datetime import datetime
 from sklearn.preprocessing import StandardScaler
+from sklearn.feature_selection import SelectKBest, f_classif
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--pvalue_filter', type=float, default=0.05, help='p-value threshold for feature selection')
@@ -35,32 +36,22 @@ parser.add_argument('--impute', action='store_true', help='Disable KNN imputatio
 parser.add_argument('--normalize', action='store_true', help='Enable feature normalization (StandardScaler)')
 args = parser.parse_args()
 
-# Load statistical test results for feature selection
-stat_path = 'data/SupplementaryData2-matched-lipids.xlsx'
-stat_df = pd.read_excel(stat_path)
-
-lipid_col = stat_df.columns[0]
-pval_col = 'AI vs noAI (all ages) p_value'
-fold_col = 'AI vs noAI (all ages) fold_change'
-bonf_col = 'AI vs noAI (all ages) Bonferroni'
-
-subset = stat_df[[lipid_col, pval_col, fold_col, bonf_col]].copy()
-subset.columns = ['lipid', 'p_value', 'fold_change', 'bonferroni']
-
-# Filter features
-subset = subset[subset['bonferroni'] < args.pvalue_filter]
-top_lipids = subset.sort_values('p_value').head(args.k)['lipid'].tolist()
-
-print(f"Selected {len(top_lipids)} lipids for prediction.")
-
 # Load main data
 file_path = 'data/SupplementaryData1.xlsx'
 df = pd.read_excel(file_path, sheet_name="lipidomics_data_males")
 
-# # Prepare features and target
+# Prepare features and target
 y_raw = df['Presence of adrenal insufficiency '].astype(str).str.strip()
 y = (y_raw == 'AI').astype(int)
-X = df[top_lipids]
+print(df.columns)
+# Select all columns except the specified ones for X
+exclude_cols = [
+    'Sample ID',
+    'Presence of Cerebral ALD ',
+    'Presence of adrenal insufficiency ',
+    'Severity of Spinal cord disease '
+]
+X = df.drop(columns=exclude_cols)
 
 # Fix LightGBM compatibility by removing colon
 X = X.rename(columns=lambda col: col.replace(":", "_"))
@@ -88,7 +79,6 @@ run_log = {
     'random_hash': rand_hash,
     'metrics': {},
     'per_fold': [],
-    'features': top_lipids
 }
 
 # Store results
@@ -118,13 +108,29 @@ for outer_fold, (train_idx, test_idx) in enumerate(outer_cv.split(X, y)):
         imputer = KNNImputer(n_neighbors=5)
         X_train_proc = pd.DataFrame(imputer.fit_transform(X_train_proc), columns=X_train.columns, index=X_train.index)
         X_val_proc = pd.DataFrame(imputer.transform(X_val_proc), columns=X_val.columns, index=X_val.index)
+
+    # Univariate feature selection
+    selector = SelectKBest(score_func=f_classif, k=300)
+    X_train_selected = selector.fit_transform(X_train_proc, y_train)
+    X_val_selected = selector.transform(X_val_proc)
+    selected_feature_names = X_train_proc.columns[selector.get_support()]
+
+    # Train Random Forest to select top 100 features
+    rf = RandomForestClassifier(n_estimators=100, random_state=random_state, n_jobs=-1)
+    rf.fit(X_train_selected, y_train)
+    importances = rf.feature_importances_
+    indices = np.argsort(importances)[-100:]
+    final_feature_names = selected_feature_names[indices]
+    X_train_final = pd.DataFrame(X_train_selected[:, indices], columns=final_feature_names, index=X_train_proc.index)
+    X_val_final = pd.DataFrame(X_val_selected[:, indices], columns=final_feature_names, index=X_val_proc.index)
+
     if args.normalize:
         scaler = StandardScaler()
-        X_train_proc = pd.DataFrame(scaler.fit_transform(X_train_proc), columns=X_train.columns, index=X_train.index)
-        X_val_proc = pd.DataFrame(scaler.transform(X_val_proc), columns=X_val.columns, index=X_val.index)
-    
-    X_train_imp = X_train_proc
-    X_val_imp = X_val_proc
+        X_train_final = pd.DataFrame(scaler.fit_transform(X_train_final), columns=final_feature_names, index=train_idx)
+        X_val_final = pd.DataFrame(scaler.transform(X_val_final), columns=final_feature_names, index=val_idx)
+
+    X_train_imp = X_train_final
+    X_val_imp = X_val_final
 
     if args.model_type == "tabpfn":
         model = TabPFNClassifier(device="cpu")
