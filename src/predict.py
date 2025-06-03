@@ -27,7 +27,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--k', type=int, default=100, help='Number of top features to select')
 parser.add_argument('--num_trials', type=int, default=30, help='Number of Optuna trials')
 
-parser.add_argument('--model_type', type=str, default='tabpfn',
+parser.add_argument('--model_type', type=str, default='lightgbm',
     choices=['rf', 'lightgbm', 'catboost', 'xgboost', 'tabpfn'],
     help='Model type: rf, lightgbm, catboost, xgboost, or tabpfn')
 
@@ -256,8 +256,8 @@ for outer_fold, (train_idx, test_idx) in enumerate(outer_cv.split(X, y)):
 
     # SHAP summary plot for fold 1
     model_type = args.model_type
-    if outer_fold == 0 and model_type != "tabpfn":
-        print("Generating SHAP values for fold 1...")
+    if model_type != "tabpfn":
+        print(f"Generating SHAP values for fold {outer_fold}...")
         if model_type == "lightgbm":
             explainer = shap.Explainer(model, X_train_imp)
             shap_values = explainer(X_train_imp).values
@@ -276,7 +276,7 @@ for outer_fold, (train_idx, test_idx) in enumerate(outer_cv.split(X, y)):
         plt.figure()
         shap.summary_plot(shap_values, X_train_imp, show=False)
         plt.tight_layout()
-        plt.savefig(osp.join(exp_dir, f"{model_type}_shap_summary.png"), dpi=300)
+        plt.savefig(osp.join(exp_dir, f"{model_type}_{outer_fold}_shap_summary.png"), dpi=300)
         plt.close()
 
         mean_abs_shap = np.abs(shap_values).mean(axis=0)  # mean absolute SHAP per feature
@@ -285,7 +285,7 @@ for outer_fold, (train_idx, test_idx) in enumerate(outer_cv.split(X, y)):
             'mean_abs_shap': mean_abs_shap
         }).sort_values(by='mean_abs_shap', ascending=False)
 
-        importance_df.to_csv(osp.join(exp_dir, f"{model_type}_shap_feature_importance.csv"), index=False)
+        importance_df.to_csv(osp.join(exp_dir, f"{model_type}_{outer_fold}_shap_feature_importance.csv"), index=False)
 
     # Metrics
     roc_auc = roc_auc_score(y_val, y_pred_prob)
