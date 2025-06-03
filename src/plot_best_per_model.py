@@ -2,9 +2,12 @@ import os
 import json
 import matplotlib.pyplot as plt
 from collections import defaultdict
+import argparse
 
-# Directory where all experiment folders are located
-base_dir = '.'
+parser = argparse.ArgumentParser(description="Plot best ROC AUC per model from experiment logs.")
+parser.add_argument("base_dir", nargs="?", default=".", help="Base directory containing experiment folders (default: current directory)")
+args = parser.parse_args()
+base_dir = args.base_dir
 
 # Structure: results[model_type][k] = max_roc_auc
 results = defaultdict(dict)
