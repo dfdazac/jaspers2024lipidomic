@@ -189,3 +189,7 @@ cython_debug/
 
 experiments/*
 !experiments/gitkeep
+
+# Ignore LibreOffice lock files
+*~lock.*#
+
