@@ -5,6 +5,7 @@ import argparse
 
 parser = argparse.ArgumentParser(description="Plot best ROC AUC per model from experiment logs.")
 parser.add_argument("base_dir", nargs="?", default=".", help="Base directory containing experiment folders (default: current directory)")
+parser.add_argument("--k", type=int, default=None, help="Only include experiments with this value of k (default: include all)")
 args = parser.parse_args()
 base_dir = args.base_dir
 
@@ -22,6 +23,10 @@ for folder in os.listdir(base_dir):
 
     with open(log_file, 'r') as f:
         log = json.load(f)
+
+    # Filter by k if specified
+    if args.k is not None and log['args'].get('k') != args.k:
+        continue
 
     model_type = log['args']['model_type']
     roc_auc = log['metrics']['roc_auc']['mean']
