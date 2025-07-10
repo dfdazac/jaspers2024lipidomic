@@ -7,7 +7,7 @@ from tqdm import tqdm
 # Experiment grid
 model_types = ['rf', 'lightgbm', 'catboost', 'xgboost', 'tabpfn']
 normalize_options = [True, False]
-k_values = [20, 50, 100, 200]
+k_values = [20, 50, 100, 150, 200]
 
 MAX_PARALLEL = 4
 
