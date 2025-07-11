@@ -10,6 +10,26 @@ from matplotlib.patches import Patch
 
 
 def aggregate_shap_importances(folders, top_k=None):
+    # Load the Excel data for missing value statistics
+    excel_path = os.path.join(os.path.dirname(__file__), '../data/SupplementaryData1.xlsx')
+    try:
+        df_excel = pd.read_excel(excel_path, sheet_name="lipidomics_data_males")
+        exclude_cols = [
+            'Sample ID',
+            'Presence of Cerebral ALD ',
+            'Presence of adrenal insufficiency ',
+            'Severity of Spinal cord disease '
+        ]
+        X_excel = df_excel.drop(columns=exclude_cols)
+        # Apply the same renaming as in the model pipeline
+        X_excel = X_excel.rename(columns=lambda col: col.replace(":", "_"))
+        missing_count_per_col = X_excel.isnull().sum()
+        missing_percent_per_col = X_excel.isnull().mean() * 100
+    except Exception as e:
+        print(f"Warning: Could not load Excel data for missing value stats: {e}")
+        missing_count_per_col = pd.Series(dtype=float)
+        missing_percent_per_col = pd.Series(dtype=float)
+
     folder_sums = {}
     all_features = set()
     folder_labels = {}
@@ -54,6 +74,10 @@ def aggregate_shap_importances(folders, top_k=None):
     # Compute overall importance and sort
     df['overall_sum'] = df.sum(axis=1)
     df = df.sort_values('overall_sum', ascending=False)
+
+    # Add missing value statistics
+    df['missing_count'] = df.index.map(lambda f: missing_count_per_col.get(f, np.nan))
+    df['missing_percent'] = df.index.map(lambda f: missing_percent_per_col.get(f, np.nan))
     
     # Select top_k features if specified
     if top_k is not None:
@@ -82,9 +106,10 @@ def aggregate_shap_importances(folders, top_k=None):
     feature_classes = [get_lipid_class(f) for f in features_in_plot]
     feature_colors = [class_to_color.get(cls, (0,0,0)) for cls in feature_classes]
 
-    # Plot heatmap (excluding overall_sum column)
+    # Plot heatmap (excluding overall_sum, missing_count, missing_percent columns)
+    plot_cols = [col for col in df_plot.columns if col not in ['overall_sum', 'missing_count', 'missing_percent']]
     plt.figure(figsize=(max(8, len(folders)*1.5), max(8, len(df_plot)/3)))
-    ax = sns.heatmap(df_plot.drop(columns=['overall_sum']), cmap='binary', annot=False)
+    ax = sns.heatmap(df_plot[plot_cols], cmap='binary', annot=False)
     plt.title('Aggregated SHAP Feature Importances')
     plt.xlabel('Model/Folders')
     plt.ylabel('Feature')
