@@ -22,6 +22,7 @@ import hashlib
 from datetime import datetime
 from sklearn.preprocessing import StandardScaler
 from sklearn.feature_selection import SelectKBest, f_classif, mutual_info_classif
+import shapiq
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--k', type=int, default=100, help='Number of top features to select')
@@ -272,6 +273,29 @@ for outer_fold, (train_idx, test_idx) in enumerate(outer_cv.split(X, y)):
         elif model_type == "rf":
             explainer = shap.TreeExplainer(model)
             shap_values = explainer.shap_values(X_train_imp)[:,:,1]
+
+            shapiq_exp = shapiq.TabularExplainer(model, X_train_imp.values, index="SII", max_order=2)
+            # Predict for all training samples
+            all_preds = model.predict(X_train_imp)
+            # Find indices for class 0 and class 1
+            idx_0 = np.where(all_preds == 0)[0]
+            idx_1 = np.where(all_preds == 1)[0]
+            # Randomly select 4 from each class (if available)
+            rng = np.random.default_rng(0)
+            sel_0 = rng.choice(idx_0, size=min(4, len(idx_0)), replace=False)
+            sel_1 = rng.choice(idx_1, size=min(4, len(idx_1)), replace=False)
+            sel_idx = np.concatenate([sel_0, sel_1])
+            X_sel = X_train_imp.iloc[sel_idx]
+            preds_sel = all_preds[sel_idx]
+            # Run shapiq explain for each of the 8 samples individually
+            for i, (row_idx, pred) in enumerate(zip(sel_idx, preds_sel)):
+                x_instance = X_sel.iloc[[i]]  # keep as DataFrame for shapiq
+                interactions = shapiq_exp.explain(x_instance, budget=100, random_state=0)
+                shapiq.network_plot(interactions, feature_names=X_train_imp.columns, show=False)
+                print(interactions.get_n_order(2))
+                # shapiq.plot.upset_plot(interactions.get_n_order(2), feature_names=X_train_imp.columns, show=False)
+                plt.title(f"Sample idx: {row_idx}, Prediction: {pred}")
+                plt.show()
 
         plt.figure()
         shap.summary_plot(shap_values, X_train_imp, show=False)
