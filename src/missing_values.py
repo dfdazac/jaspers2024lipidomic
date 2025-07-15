@@ -24,6 +24,7 @@ main_df = pd.read_excel(excel_path, sheet_name="lipidomics_data_males")
 main_df = main_df.rename(columns=lambda col: col.replace(":", "_"))
 
 # Prepare figure
+# --- BOX PLOT OF LIPID VALUES ---
 fig, axes = plt.subplots(10, 10, figsize=(30, 30), constrained_layout=True)
 axes = axes.flatten()
 
@@ -34,12 +35,20 @@ for i, lipid in enumerate(top_lipids):
         ax.axis('off')
         continue
     data = main_df[lipid]
-    if not isinstance(data, pd.Series):
-        data = pd.Series(data)
     box_data = [data.dropna()]
     labels = ['All']
     box_colors = ['#888888']  # gray for 'All'
-    # For each clinical column, add boxplots for each group
+    # Identify Control group (patients who are Control in any clinical variable)
+    control_mask = (main_df[clinical_cols] == 'Control').any(axis=1)
+    control_group = main_df[control_mask][lipid]
+    if not isinstance(control_group, pd.Series):
+        control_group = pd.Series(control_group)
+    control_group = control_group.dropna()
+    if len(control_group) > 0:
+        box_data.append(control_group)
+        labels.append('Control')
+        box_colors.append('#9467bd')  # purple for Control
+    # For each clinical column, add boxplots for each group except 'Control'
     color_map = {
         'Presence of Cerebral ALD ': '#1f77b4',           # blue
         'Presence of adrenal insufficiency ': '#2ca02c',  # green
@@ -48,7 +57,9 @@ for i, lipid in enumerate(top_lipids):
     for col in clinical_cols:
         if col in main_df.columns:
             for val in main_df[col].dropna().unique():
-                group = main_df[main_df[col] == val][lipid]
+                if val == 'Control':
+                    continue  # already handled
+                group = main_df[(main_df[col] == val) & (~control_mask)][lipid]
                 if not isinstance(group, pd.Series):
                     group = pd.Series(group)
                 group = group.dropna()
@@ -108,11 +119,23 @@ for i, lipid in enumerate(top_lipids):
     # All
     frac_missing_all = data.isna().mean()
     group_fracs.append(frac_missing_all)
-    # For each clinical column, add missing fraction for each group
+    # Control group
+    control_mask = (main_df[clinical_cols] == 'Control').any(axis=1)
+    control_group = main_df[control_mask][lipid]
+    if not isinstance(control_group, pd.Series):
+        control_group = pd.Series(control_group)
+    frac_missing_control = control_group.isna().mean() if len(control_group) > 0 else np.nan
+    if not np.isnan(frac_missing_control):
+        group_fracs.append(frac_missing_control)
+        labels.append('Control')
+        bar_colors.append('#9467bd')
+    # For each clinical column, add missing fraction for each group except 'Control'
     for col in clinical_cols:
         if col in main_df.columns:
             for val in main_df[col].dropna().unique():
-                group = main_df[main_df[col] == val][lipid]
+                if val == 'Control':
+                    continue  # already handled
+                group = main_df[(main_df[col] == val) & (~control_mask)][lipid]
                 if not isinstance(group, pd.Series):
                     group = pd.Series(group)
                 frac_missing = group.isna().mean() if len(group) > 0 else np.nan
