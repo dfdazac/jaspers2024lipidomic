@@ -8,6 +8,7 @@ from sklearn.metrics import roc_auc_score, average_precision_score
 from imblearn.over_sampling import SVMSMOTE
 from imblearn.pipeline import Pipeline
 from sklearn.impute import KNNImputer
+from imputers import Min5Imputer
 from scipy.stats import sem, t
 from lightgbm import LGBMClassifier
 from xgboost import XGBClassifier
@@ -33,6 +34,7 @@ parser.add_argument('--model_type', type=str, default='lightgbm',
     help='Model type: rf, lightgbm, catboost, xgboost, or tabpfn')
 
 parser.add_argument('--normalize', action='store_true', help='Enable feature normalization (StandardScaler)')
+parser.add_argument('--imputer', type=str, default='knn', choices=['knn', 'min5'], help='Imputer type: knn or min5')
 args = parser.parse_args()
 
 # Load main data
@@ -102,7 +104,13 @@ for outer_fold, (train_idx, test_idx) in enumerate(outer_cv.split(X, y)):
     X_train_proc = X_train.copy()
     X_val_proc = X_val.copy()
 
-    imputer = KNNImputer(n_neighbors=5)
+    if args.imputer == 'knn':
+        imputer = KNNImputer(n_neighbors=5)
+    elif args.imputer == 'min5':
+        imputer = Min5Imputer()
+    else:
+        raise ValueError(f"Unknown imputer: {args.imputer}")
+
     X_train_proc = pd.DataFrame(imputer.fit_transform(X_train_proc), columns=X_train.columns, index=X_train.index)
     X_val_proc = pd.DataFrame(imputer.transform(X_val_proc), columns=X_val.columns, index=X_val.index)
     
