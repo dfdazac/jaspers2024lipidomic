@@ -35,11 +35,16 @@ parser.add_argument('--model_type', type=str, default='lightgbm',
 
 parser.add_argument('--normalize', action='store_true', help='Enable feature normalization (StandardScaler)')
 parser.add_argument('--imputer', type=str, default='knn', choices=['knn', 'min5'], help='Imputer type: knn or min5')
+parser.add_argument('--exclude_controls', action='store_true', help="Exclude rows where 'Presence of adrenal insufficiency ' == 'Control'")
 args = parser.parse_args()
 
 # Load main data
-file_path = 'data/SupplementaryData1.xlsx'
+file_path = 'data/SupplementaryData1-with-age.xlsx'
 df = pd.read_excel(file_path, sheet_name="lipidomics_data_males")
+
+# Optionally exclude controls
+if args.exclude_controls:
+    df = df[df['Presence of adrenal insufficiency '].astype(str).str.strip() != 'Control']
 
 # Prepare features and target
 y_raw = df['Presence of adrenal insufficiency '].astype(str).str.strip()
@@ -119,13 +124,26 @@ for outer_fold, (train_idx, test_idx) in enumerate(outer_cv.split(X, y)):
         X_train_proc = pd.DataFrame(scaler.fit_transform(X_train_proc), columns=X_train.columns, index=X_train.index)
         X_val_proc = pd.DataFrame(scaler.transform(X_val_proc), columns=X_val.columns, index=X_val.index)
 
-    # Univariate feature selection
-    selector = SelectKBest(score_func=mutual_info_classif, k=args.k)
-    selector.fit(X_train_proc, y_train)
+    # --- Feature selection: only on lipids, then add age back ---
+    age_col = 'age at sampling'
+    # Extract age column
+    age_train = X_train_proc[age_col]
+    age_val = X_val_proc[age_col]
+    # Remove age from feature set for selection
+    X_train_lipids = X_train_proc.drop(columns=[age_col])
+    X_val_lipids = X_val_proc.drop(columns=[age_col])
 
-    selected_cols = X_train_proc.columns[selector.get_support()]
-    X_train_final = X_train_proc[selected_cols]
-    X_val_final = X_val_proc[selected_cols]
+    selector = SelectKBest(score_func=mutual_info_classif, k=args.k)
+    selector.fit(X_train_lipids, y_train)
+
+    selected_lipid_cols = X_train_lipids.columns[selector.get_support()]
+
+    X_train_selected = X_train_lipids[selected_lipid_cols]
+    X_val_selected = X_val_lipids[selected_lipid_cols]
+
+    # Add age back to the selected features
+    X_train_final = pd.concat([X_train_selected, age_train], axis=1)
+    X_val_final = pd.concat([X_val_selected, age_val], axis=1)
 
     X_train_imp = X_train_final
     X_val_imp = X_val_final
