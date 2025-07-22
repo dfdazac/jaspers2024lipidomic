@@ -17,7 +17,8 @@ def build_cmd(model, normalize, k, imputer):
         sys.executable, "src/predict.py",
         "--model_type", model,
         "--k", str(k),
-        "--imputer", imputer
+        "--imputer", imputer,
+        "--exlude_controls",
     ]
     if normalize:
         cmd.append("--normalize")
