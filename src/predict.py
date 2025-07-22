@@ -315,6 +315,38 @@ for outer_fold, (train_idx, test_idx) in enumerate(outer_cv.split(X, y)):
 
         importance_df.to_csv(osp.join(exp_dir, f"{model_type}_{outer_fold}_shap_feature_importance.csv"), index=False)
 
+        # --- Collect per-instance SHAP values for the training set ---
+        # Get all original lipid columns (excluding age)
+        age_col = 'age at sampling'
+        lipid_cols = [col for col in X.columns if col != age_col]
+        # Map from feature name to index in X_train_imp
+        feature_to_idx = {feat: i for i, feat in enumerate(X_train_imp.columns)}
+        # For each training instance, build a row
+        if outer_fold == 0:
+            instance_shap_rows = []  # initialize only once
+        y_train_pred = model.predict(X_train_imp)
+        for i, idx in enumerate(X_train_imp.index):
+            row = {
+                'k': args.k,
+                'model_type': args.model_type,
+                'normalize': args.normalize,
+                'imputer': args.imputer,
+                'fold': outer_fold + 1,
+                'sample_id': df.loc[idx, patient_id_col],
+                'age': df.loc[idx, age_col],
+                'true_adrenal_insufficiency': y_train.loc[idx],
+                'pred_adrenal_insufficiency': y_train_pred[i],
+            }
+            # SHAP values for all original lipids (use -1 for unselected)
+            for lipid in lipid_cols:
+                if lipid in feature_to_idx:
+                    shap_idx = feature_to_idx[lipid]
+                    shap_val = shap_values[i, shap_idx]
+                else:
+                    shap_val = np.nan
+                row[f'{lipid}'] = shap_val
+            instance_shap_rows.append(row)
+
     # Metrics
     roc_auc = roc_auc_score(y_val, y_pred_prob)
     pr_auc = average_precision_score(y_val, y_pred_prob)
@@ -345,3 +377,8 @@ run_log['metrics'] = {
 run_log['per_fold'] = per_fold_rows
 with open(os.path.join(exp_dir, 'log.json'), 'w') as f:
     json.dump(run_log, f, indent=2)
+
+# --- Save instance-level SHAP table ---
+if 'instance_shap_rows' in locals():
+    instance_shap_df = pd.DataFrame(instance_shap_rows)
+    instance_shap_df.to_csv(os.path.join(exp_dir, 'instance_shap_table.csv'), index=False)
