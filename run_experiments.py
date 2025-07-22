@@ -18,7 +18,7 @@ def build_cmd(model, normalize, k, imputer):
         "--model_type", model,
         "--k", str(k),
         "--imputer", imputer,
-        "--exlude_controls",
+        "--exclude_controls",
     ]
     if normalize:
         cmd.append("--normalize")
