@@ -1,0 +1,19 @@
+Lipid Class	# Chains	Minimum Sum Carbon Length for VLCFA
+1-acyl LPC	1	22
+2-acyl LPC	1	22
+LPC, LPC(O), LPC(P)	1	22
+LPE, LPE(O), LPE(P)	1	22
+LPG, LPI, LPS	1	22
+PC, PC(O), PC(P), PC(O+P)	2	38
+PE, PE(O), PE(P), PE(O+P)	2	38
+PI, PG, PS	2	38
+DG, DG(O), DG(P)	2	38
+TG, TG(O)	3	54
+Cer(d)	2	40
+HexCer, Hex2Cer, Hex3Cer	2	40
+GM1(d), GM2(d), GM3(d)	2	40
+SM(d), SM(t), SM4(d), SM4(t)	2	40
+CE	1	22
+CL	4	70
+AC, AC-OH	1	22
+SLBPA	2	38

@@ -25,6 +25,7 @@ from tabpfn import TabPFNClassifier
 from xgboost import XGBClassifier
 
 from imputers import Min5Imputer
+from select_vlcfas import select_vlcfas
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--k', type=int, default=100, help='Number of top features to select')
@@ -37,6 +38,7 @@ parser.add_argument('--model_type', type=str, default='lightgbm',
 parser.add_argument('--normalize', action='store_true', help='Enable feature normalization (StandardScaler)')
 parser.add_argument('--imputer', type=str, default='knn', choices=['knn', 'min5'], help='Imputer type: knn or min5')
 parser.add_argument('--exclude_controls', action='store_true', help="Exclude rows where 'Presence of adrenal insufficiency ' == 'Control'")
+parser.add_argument('--vlcfas_only', action='store_true', help='Use only VLCFA lipid columns per data/vlcfas.csv')
 args = parser.parse_args()
 
 # Load main data
@@ -46,6 +48,20 @@ df = pd.read_excel(file_path, sheet_name="lipidomics_data_males")
 # Optionally exclude controls
 if args.exclude_controls:
     df = df[df['Presence of adrenal insufficiency '].astype(str).str.strip() != 'Control']
+
+# Precompute VLCFA-selected lipid columns if requested
+selected_lipid_columns = None
+if args.vlcfas_only:
+    meta_cols = {
+        'Sample ID',
+        'Presence of Cerebral ALD ',
+        'Presence of adrenal insufficiency ',
+        'Severity of Spinal cord disease '
+    }
+    candidate_lipid_cols = [c for c in df.columns if c not in meta_cols and c != 'age at sampling']
+    selected_lipid_columns = list(select_vlcfas(df[candidate_lipid_cols]).columns)
+
+breakpoint()
 
 # Prepare features and target
 y_raw = df['Presence of adrenal insufficiency '].astype(str).str.strip()
@@ -58,6 +74,11 @@ exclude_cols = [
     'Severity of Spinal cord disease '
 ]
 X = df.drop(columns=exclude_cols)
+
+# If VLCFAs only, keep only selected lipids plus age
+if args.vlcfas_only and selected_lipid_columns is not None:
+    keep_cols = set(selected_lipid_columns + ['age at sampling'])
+    X = X[[c for c in X.columns if c in keep_cols]]
 
 # Fix LightGBM compatibility by removing colon
 X = X.rename(columns=lambda col: col.replace(":", "_"))
