@@ -14,7 +14,7 @@ best_results = {}
 for folder in os.listdir(base_dir):
     folder_path = os.path.join(base_dir, folder)
 
-    if not os.path.isdir(folder_path) or not folder.startswith("2025-06"):
+    if not os.path.isdir(folder_path) or not folder.startswith("2025"):
         continue
 
     log_file = os.path.join(folder_path, 'log.json')
