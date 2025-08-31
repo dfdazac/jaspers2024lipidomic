@@ -61,8 +61,6 @@ if args.vlcfas_only:
     candidate_lipid_cols = [c for c in df.columns if c not in meta_cols and c != 'age at sampling']
     selected_lipid_columns = list(select_vlcfas(df[candidate_lipid_cols]).columns)
 
-breakpoint()
-
 # Prepare features and target
 y_raw = df['Presence of adrenal insufficiency '].astype(str).str.strip()
 y = (y_raw == 'AI').astype(int)

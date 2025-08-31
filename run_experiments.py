@@ -19,6 +19,7 @@ def build_cmd(model, normalize, k, imputer):
         "--k", str(k),
         "--imputer", imputer,
         "--exclude_controls",
+        "--vlcfas_only",
     ]
     if normalize:
         cmd.append("--normalize")
@@ -26,7 +27,7 @@ def build_cmd(model, normalize, k, imputer):
 
 def run_experiment(model, normalize, k, imputer):
     cmd = build_cmd(model, normalize, k, imputer)
-    # print(f"Running: {' '.join(cmd)}")
+    print(f"Running: {' '.join(cmd)}")
     
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
