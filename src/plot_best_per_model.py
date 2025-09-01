@@ -5,7 +5,7 @@ from collections import defaultdict
 import argparse
 
 parser = argparse.ArgumentParser(description="Plot best ROC AUC per model from experiment logs.")
-parser.add_argument("base_dir", nargs="?", default=".", help="Base directory containing experiment folders (default: current directory)")
+parser.add_argument("base_dir", nargs="?", default="experiments", help="Base directory containing experiment folders (default: experiments)")
 args = parser.parse_args()
 base_dir = args.base_dir
 
@@ -15,7 +15,7 @@ results = defaultdict(dict)
 for folder in os.listdir(base_dir):
     folder_path = os.path.join(base_dir, folder)
 
-    if not os.path.isdir(folder_path) or not folder.startswith("2025-06"):
+    if not os.path.isdir(folder_path):
         continue
 
     log_file = os.path.join(folder_path, 'log.json')

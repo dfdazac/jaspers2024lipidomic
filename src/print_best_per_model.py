@@ -29,6 +29,11 @@ for folder in os.listdir(base_dir):
         continue
 
     model_type = log['args']['model_type']
+    k = log['args']['k']
+    normalize = log['args']['normalize']
+    imputer = log['args']['imputer']
+    exclude_controls = log['args']['exclude_controls']
+    vlcfas_only = log['args']['vlcfas_only']
     roc_auc = log['metrics']['roc_auc']['mean']
     pr_auc = log['metrics']['pr_auc']['mean']
 
@@ -40,6 +45,11 @@ for folder in os.listdir(base_dir):
             'pr_auc': pr_auc,
             'pr_ci_low': log['metrics']['pr_auc']['ci_low'],
             'pr_ci_high': log['metrics']['pr_auc']['ci_high'],
+            'k': k,
+            'normalize': normalize,
+            'imputer': imputer,
+            'exclude_controls': exclude_controls,
+            'vlcfas_only': vlcfas_only,
             'folder': folder
         }
 
@@ -50,4 +60,9 @@ for model_type, metrics in sorted(best_results.items(), key=lambda x: x[1]['roc_
           f"[{metrics['roc_ci_low']:.2%}, {metrics['roc_ci_high']:.2%}]")
     print(f"  PR AUC  = {metrics['pr_auc']:.2%} "
           f"[{metrics['pr_ci_low']:.2%}, {metrics['pr_ci_high']:.2%}]")
+    print(f"  k = {metrics['k']}")
+    print(f"  normalize = {metrics['normalize']}")
+    print(f"  imputer = {metrics['imputer']}")
+    print(f"  exclude_controls = {metrics['exclude_controls']}")
+    print(f"  vlcfas_only = {metrics['vlcfas_only']}")
     print(f"  From folder: {metrics['folder']}\n")
